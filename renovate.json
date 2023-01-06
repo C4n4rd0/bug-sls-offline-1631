@@ -1,0 +1,9 @@
+{
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    }
+  ],
+  "extends": ["config:base"]
+}
