@@ -1,0 +1,7 @@
+/.build/
+/.idea/
+/.step-functions-local/
+/node_modules/
+/.tsbuildinfo
+/counter.txt
+/bug-sls-offline.iml

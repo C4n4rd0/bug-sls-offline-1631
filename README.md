@@ -15,6 +15,7 @@
 Tested on Node 14.18.1
 ```bash
 npm install
+npm run sf:install
 ```
 
 ## Testing
