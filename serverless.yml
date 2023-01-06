@@ -1,0 +1,108 @@
+service: bug-sls-offline
+# Starting from Sls V4, configValidationMode default value is error meaning it'll throw sls configuration error
+# So, set this to warn because the part related to the conf lambda layer may return error
+configValidationMode: warn
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  environment:
+    SERVICE: ${self:service}
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    NO_COLOR: ${env:NO_COLOR, 'true'}
+    TASK1_LAMBDA_ARN: arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:${self:service}-${self:provider.stage}-task1
+    TASK2_LAMBDA_ARN: arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:${self:service}-${self:provider.stage}-task2
+    WORKFLOW_SFN_ARN: arn:aws:states:${self:provider.region}:${self:custom.accountId}:stateMachine:${self:custom.config.step-function-name.${self:provider.stage}, self:custom.config.step-function-name.default}
+    COUNTER_FILE_PATH: ./counter.txt
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-step-functions
+  - serverless-step-functions-local
+  - serverless-offline
+package:
+  patterns:
+    - '!node_modules/typescript/**'
+    - '!node_modules/@types/**'
+
+custom:
+  accountId: ${env:ACCOUNT_ID, '101010101010'}
+  config:
+    code-artifact-user-pending-exception:
+      # The exception is set in a variable because of an issue in serverless offline
+      # cf: https://github.com/dherault/serverless-offline/issues/1631
+      value: ${self:custom.config.code-artifact-user-pending-exception.env.${self:provider.stage}, self:custom.config.code-artifact-user-pending-exception.env.default}
+      env:
+        #offline: Error
+        offline: CodeArtifactUserPendingException
+        default: CodeArtifactUserPendingException
+    step-function-name:
+      offline: myStepFunction
+      default: ${self:custom.stepFunctionsLocal.name}
+  serverless-offline:
+    lambdaPort: ${env:AWS_LAMBDA_PORT, 3101}
+  stepFunctionsLocal:
+    name: ${self:service}-${self:provider.stage}-step-function
+    accountId: ${self:custom.accountId}
+    region: ${self:provider.region}
+    lambdaEndpoint: ${env:AWS_LAMBDA_ENDPOINT, http://localhost:3101}
+
+functions:
+  task1:
+    handler: src/handler/task1.handler
+  task2:
+    handler: src/handler/task2.handler
+
+stepFunctions:
+  validate: true
+  stateMachines:
+    myStepFunction:
+      name: ${self:custom.stepFunctionsLocal.name}
+      type: STANDARD
+      definition:
+        StartAt: Task1
+        States:
+          Task1: {
+            Type: Task,
+            Resource: arn:aws:states:::lambda:invoke,
+            Parameters: { FunctionName.$: $.task1Arn, Payload.$: $ },
+            ResultSelector: { body.$: $.Payload },
+            ResultPath: $.task1,
+            Next: Task2,
+            Retry: [ {
+              ErrorEquals: [
+                "Lambda.ServiceException",
+                "Lambda.AWSLambdaException",
+                "Lambda.SdkClientException",
+                "Lambda.CodeArtifactUserPendingException",
+                # The exception is set in a variable because of an issue in serverless offline
+                # cf: https://github.com/dherault/serverless-offline/issues/1631
+                "${self:custom.config.code-artifact-user-pending-exception.value}"
+              ],
+              IntervalSeconds: 3,
+              MaxAttempts: 3,
+              BackoffRate: 2
+            } ],
+          }
+          Task2: {
+            Type: Task,
+            Resource: arn:aws:states:::lambda:invoke,
+            Parameters: { FunctionName.$: $.task2Arn, Payload.$: $ },
+            ResultSelector: { body.$: $.Payload },
+            ResultPath: $.task2,
+            Retry: [ {
+              ErrorEquals: [
+                "Lambda.ServiceException",
+                "Lambda.AWSLambdaException",
+                "Lambda.SdkClientException",
+              ],
+              IntervalSeconds: 3,
+              MaxAttempts: 3,
+              BackoffRate: 2
+            } ],
+            End: true,
+          }
